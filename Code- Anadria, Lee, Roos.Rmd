@@ -1,0 +1,295 @@
+---
+title: "Biomed case study 6"
+author: "D. Anadria, H. Lee, L. Roos"
+output: html_document
+---
+```{r}
+# libraries
+library(foreign)
+library(tableone)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+library(car)
+library(stats)
+library(pwr)
+```
+
+```{r}
+# load data
+choldat <- as.data.frame(read.spss(file = "data_cholesterol.sav"))
+```
+# Create table 1
+```{r}
+colnames_full <- as.list(colnames(choldat))
+cont <- colnames_full[- c(1, 11, 12, 14, 15, 17, 18, 19, 20)]
+fact <- colnames_full[c(5,6,7)]
+                            
+tab1 <-  CreateTableOne(vars = as.character(cont), 
+                        factorVars = as.character(fact),
+                        strata = "code",
+                        data = choldat,
+                        test = FALSE)
+print(tab1, showAllLevels = TRUE)
+```
+```{r}
+tab1Mat <- print(tab1, 
+                 showAllLevels = TRUE, 
+                 quote = FALSE, 
+                 printToggle = FALSE)
+# Save to a CSV file
+write.csv(tab1Mat, file = "tab1.csv")
+```
+
+# Sample size 
+```{r}
+pwr.anova.test(k =2, power=0.8, f=2/15, sig.level =0.05)
+```
+```{r}
+n <- 222*2
+n * 1.05
+```
+
+# ANCOVA 
+```{r}
+ancov_res <- glm(HDLchol24 ~ code + HDLchol0, 
+            data=choldat)
+summary(ancov_res)
+```
+```{r}
+ancov_res2 <- aov(HDLchol24 ~ code + HDLchol0, 
+            data=choldat)
+summary(ancov_res2)
+```
+```{r}
+ancov_res2$coefficients
+```
+```{r}
+confint(ancov_res2)
+```
+
+```{r}
+choldat %>% 
+  group_by(code) %>% 
+  get_summary_stats(HDLchol24, type = "mean_sd")
+```
+
+# Plot
+```{r}
+choldat_long <- pivot_longer(data = choldat,
+             cols = c("HDLchol0", "HDLchol12", "HDLchol24"),
+             names_prefix = "HDLchol",
+             names_to = "time",
+             values_to = "HDLchol")
+
+choldat_long %>%
+  group_by(code, time) %>%
+  get_summary_stats(HDLchol, type = "mean_sd")
+
+choldat_long2 <- drop_na(choldat_long, "HDLchol")
+
+boxplot <- ggboxplot(
+  choldat_long2, 
+  x = "code", 
+  y = "HDLchol", 
+  color = "time",
+  xlab = 'Group',
+  main = "Figure 1: Boxplots per time point per group"
+  )
+boxplot
+```
+# Assumption checking
+
+## Linearity
+```{r}
+scatterplot(choldat$HDLchol24 ~ choldat$HDLchol0 | code, 
+            data = choldat, 
+            grid = FALSE,
+            col = c("red","blue"),
+            pch = c(5,1),
+            main = "Linearity between covariate and outcome (per group)",
+            xlab = "Baseline HDL",
+            ylab = "Final HDL")
+```
+## Homogeneity of regression slopes
+```{r}
+summary(aov(HDLchol24 ~ code*HDLchol0, 
+    data = choldat))
+```
+Test is significant but looking at above plot, we can assume homogeneity. 
+
+## Outliers
+```{r}
+boxplot(choldat$HDLchol24)
+```
+
+## Normality of residuals
+
+```{r}
+shapiro.test(choldat$HDLchol24)
+```
+
+Q-Q plot
+```{r}
+qqnorm(residuals(ancov_res))
+qqline(residuals(ancov_res)) 
+```
+
+```{r}
+# X-axis grid
+x <- choldat$HDLchol24
+x2 <- seq(min(x, na.rm=T), max(x, na.rm=T), length = 40)
+
+# Normal curve
+fun <- dnorm(x2, mean = mean(x, na.rm=T), sd = sd(x, na.rm=T))
+
+# Histogram
+hist(x, prob = TRUE,
+     main = "Density of the data versus normal curve")
+lines(x2, fun, col = 2, lwd = 2)
+lines(density(x, na.rm=T), col = 4, lwd = 2)
+```
+
+
+## Homogeneity of variance / Homoscedasticity  
+```{r}
+leveneTest(HDLchol24 ~ as.factor(code), data = choldat)
+```
+```{r}
+var.test(HDLchol24 ~ as.factor(code), data = choldat)
+```
+```{r}
+fligner.test(HDLchol24 ~ as.factor(code), data = choldat)
+```
+```{r}
+plot(fitted(ancov_res), residuals(ancov_res))
+abline(0,0)
+```
+So, heteroscedasticity...
+
+# Outliers removed
+```{r}
+outliers24 <- boxplot.stats(choldat$HDLchol24)$out
+out_rows24 <- which(choldat$HDLchol24 %in% c(outliers24))
+
+outliers0 <- boxplot.stats(choldat$HDLchol0)$out
+out_rows0 <- which(choldat$HDLchol0 %in% c(outliers0))
+
+outliers <- unique(c(out_rows24, out_rows0))
+# remove outliers
+choldat_new <- choldat[-c(outliers),]
+```
+
+## ANCOVA 
+```{r}
+ancov_res_out <- glm(HDLchol24 ~ code + HDLchol0, 
+            data=choldat_new)
+summary(ancov_res_out)
+```
+
+```{r}
+ancov_res_out2 <- aov(HDLchol24 ~ code + HDLchol0, 
+            data=choldat_new)
+summary(ancov_res_out2)
+```
+```{r}
+ancov_res_out2$coefficients
+confint(ancov_res_out2)
+```
+```{r}
+choldat_new %>% 
+  group_by(code) %>% 
+  get_summary_stats(HDLchol24)
+```
+```{r}
+# r-squared
+with(summary(ancov_res_out), 1 - deviance/null.deviance)
+```
+
+## Plot
+```{r}
+choldat_long <- pivot_longer(data = choldat_new,
+             cols = c("HDLchol0", "HDLchol12", "HDLchol24"),
+             names_prefix = "HDLchol",
+             names_to = "time",
+             values_to = "HDLchol")
+
+choldat_long %>%
+  group_by(code, time) %>%
+  get_summary_stats(HDLchol, type = "mean_sd")
+
+choldat_long2 <- drop_na(choldat_long, "HDLchol")
+
+boxplot <- ggboxplot(
+  choldat_long2, 
+  x = "code", 
+  y = "HDLchol", 
+  color = "time",
+  xlab = 'Group',
+  main ="Figure 1: HDL levels per time point and per group"
+  )
+boxplot
+```
+
+## Assumption checking
+
+### Linearity
+```{r}
+scatterplot(choldat_new$HDLchol24 ~ choldat_new$HDLchol0 | code, 
+            data = choldat_new, 
+            grid = FALSE,
+            col = c("red","blue"),
+            pch = c(5,1),
+            main = "Linearity between covariate and outcome (per group)",
+            xlab = "Baseline HDL",
+            ylab = "Final HDL")
+```
+
+## Homogeneity of regression slopes
+```{r}
+summary(aov(HDLchol24 ~ code*HDLchol0, 
+    data = choldat_new))
+```
+
+## Normality of residuals
+
+```{r}
+shapiro.test(choldat_new$HDLchol24)
+```
+
+Q-Q plot
+```{r}
+qqnorm(residuals(ancov_res_out))
+qqline(residuals(ancov_res_out)) 
+```
+
+```{r}
+# X-axis grid
+x <- choldat_new$HDLchol24
+x2 <- seq(min(x, na.rm=T), max(x, na.rm=T), length = 40)
+
+# Normal curve
+fun <- dnorm(x2, mean = mean(x, na.rm=T), sd = sd(x, na.rm=T))
+
+# Histogram
+hist(x, prob = TRUE,
+     main = "Density of the data versus normal curve")
+lines(x2, fun, col = 2, lwd = 2)
+lines(density(x, na.rm=T), col = 4, lwd = 2)
+```
+
+## Homogeneity of variance / Homoscedasticity  
+```{r}
+leveneTest(HDLchol24 ~ as.factor(code), data = choldat_new)
+```
+```{r}
+var.test(HDLchol24 ~ as.factor(code), data = choldat_new)
+```
+```{r}
+fligner.test(HDLchol24 ~ as.factor(code), data = choldat_new)
+```
+```{r}
+plot(fitted(ancov_res_out), residuals(ancov_res_out))
+abline(0,0)
+```
+Still a little bit of heterscedasticity, but nothing to worry about. 
